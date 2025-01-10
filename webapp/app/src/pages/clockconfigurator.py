@@ -133,8 +133,8 @@ class ClockConfigurator(Page):
             reference, output_clocks_filtered, output_names_filtered
         )
 
-        # try:
-        if True:
+        try:
+            # if True:
             clk_chip.solve()
 
             print("----------\nSolution found")
@@ -169,7 +169,7 @@ class ClockConfigurator(Page):
                     with st.container(border=True):
                         # st.markdown(file)
                         print(file)
-                        st.image(file, use_column_width=True)
-        # except Exception as e:
-        #     print(e)
-        #     st.warning("No valid configuration found")
+                        st.image(file, use_container_width=True)
+        except Exception as e:
+            print(e)
+            st.warning("No valid configuration found")

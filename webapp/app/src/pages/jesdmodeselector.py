@@ -7,19 +7,17 @@ from adijif.converters import supported_parts as sp
 from adijif.utils import get_jesd_mode_from_params
 import adijif
 
+from .helpers.jesd import get_jesd_controls, get_valid_jesd_modes
+
 options_to_skip = ["global_index", "decimations"]
 
 
 class JESDModeSelector(Page):
     def __init__(self, state):
         self.state = state
+        self.part_images = {}
 
     def write(self):
-        # slider_value = st.slider(
-        #     "Set Value from here See it on Page 2",
-        #     value=self.state.client_config["slider_value"],
-        # )
-        # self.state.client_config["slider_value"] = slider_value
 
         # Get supported parts that have quick_configuration_modes
         supported_parts_filtered = []
@@ -42,143 +40,116 @@ class JESDModeSelector(Page):
 
         converter = eval(f"adijif.{sb}()")
 
-        if hasattr(converter, "decimation_available"):
-            decimation = st.selectbox(
-                "Decimation",
-                options=converter.decimation_available,
-                format_func=lambda x: str(x),
-            )
-            converter.decimation = decimation
+        ## Show diagram
+        with st.expander(label="Diagram", expanded=True):
+            if sb not in self.part_images:
+                # Generate image
+                from .helpers.drawers import draw_ad9680
 
-        converter_rate = st.number_input("Converter Rate (Hz)", value=1e9)
-        converter.sample_clock = converter_rate / converter.decimation
-        print(converter.sample_clock)
+                self.part_images[sb] = draw_ad9680()
+                # FIXME: State is not being saved
 
-        # Pick the first subclass and mode of that subclass to key list of possible settings
-        all_modes = converter.quick_configuration_modes
-        subclass = list(all_modes.keys())[0]
-        subclasses = list(all_modes.keys())
-        example_mode_key = list(all_modes[subclass].keys())[0]
-        example_mode_settings = all_modes[subclass][example_mode_key]
+            st.image(self.part_images[sb], use_container_width=True)
 
-        # Parse all options for each control
-        options = {}
-        for setting in example_mode_settings:
-            if setting in options_to_skip:
-                continue
-            options[setting] = []
-            for subclass in subclasses:
-                for mode in all_modes[subclass]:
-                    data = all_modes[subclass][mode][setting]
-                    if type(data) == list:
-                        continue
-                    options[setting].append(data)
+        ## Shared Configuration
+        with st.expander("Shared Configuration", expanded=True):
+            decimation = 1
+            if converter.datapath:
+                if hasattr(converter.datapath, "cddc_decimations_available"):
+                    print("Here")
+                    options = converter.datapath.cddc_decimations_available
+                    cddc_decimation = st.selectbox(
+                        "CDDC Decimation", options=options, format_func=lambda x: str(x)
+                    )
+                    decimation = cddc_decimation
+                    v = len(converter.datapath.cddc_decimations)
+                    converter.datapath.cddc_decimations = [cddc_decimation] * v
+                if hasattr(converter.datapath, "fddc_decimations_available"):
+                    options = converter.datapath.fddc_decimations_available
+                    fddc_decimation = st.selectbox(
+                        "FDDC Decimation", options=options, format_func=lambda x: str(x)
+                    )
+                    decimation *= fddc_decimation
+                    v = len(converter.datapath.fddc_decimations)
+                    converter.datapath.fddc_decimations = [fddc_decimation] * v
+            elif hasattr(converter, "decimation_available"):
+                decimation = st.selectbox(
+                    "Decimation",
+                    options=converter.decimation_available,
+                    format_func=lambda x: str(x),
+                )
+                decimation = int(decimation)
+                converter.decimation = decimation
 
+            converter_rate = st.number_input("Converter Rate (Hz)", value=1e9)
+            converter.sample_clock = converter_rate / decimation
 
-        # Make sure options only contain unique values
-        for option in options:
-            options[option] = list(set(options[option]))
+        ## Derived settings
+        dict_data = {
+            "Derived Setting": ["Sample Rate (MSPS)"],
+            "Value": [converter.sample_clock / 1e6],
+        }
+        df = pd.DataFrame.from_dict(dict_data)
+        st.dataframe(df, hide_index=True, use_container_width=True)
 
+        cols = st.columns(2, border=True)
+
+        ## JESD204 Configuration Inputs
+        options, all_modes = get_jesd_controls(converter)
         selections = {}
 
-        with st.expander(label="JESD204 Configuration", expanded=True):
+        with cols[0]:
+            st.subheader("Configuration")
+
             for option in options:
                 selections[option] = st.multiselect(option, options[option])
 
-        # If None is selected, remove it from the dictionary
+        ## Output table of valid modes and calculate clocks
         selections = {k: v for k, v in selections.items() if v != []}
+        modes_all_info, found_modes = get_valid_jesd_modes(
+            converter, all_modes, selections
+        )
 
-        try:
-            print(selections)
-            found_modes = get_jesd_mode_from_params(converter, **selections)
-        # except Exception as e:
-        # st.write(e)
-        # return
-        except:
-            print("No modes found")
-            found_modes = None
+        with cols[1]:
+            st.subheader("JESD204 Modes")
 
-        if found_modes:
-            # Get remaining mode parameters
-            modes_all_info = {}
-            for mode in found_modes:
-                print(mode)
-                modes_all_info[mode["mode"]] = all_modes[mode["jesd_class"]][
-                    mode["mode"]
-                ]
-                modes_all_info[mode["mode"]]['jesd_class'] = mode["jesd_class"]
-                # Remove options to skip
-                for option in options_to_skip:
-                    modes_all_info[mode["mode"]].pop(option, None)
+            if found_modes:
+                # Create formatted table of modes
 
-            # For each mode calculate the clocks and if valid
-            for mode in modes_all_info:
-                rate = converter.sample_clock
-                # print("A", converter.sample_clock)
-                converter.set_quick_configuration_mode(mode, modes_all_info[mode]['jesd_class'])
-                # print("B", converter.sample_clock)
-                print("BUG")
-                converter.sample_clock = rate
+                # Convert to DataFrame so we can change orientation
+                df = pd.DataFrame(modes_all_info)
 
-                clocks = {"Sample Rate (MSPS)": converter.sample_clock/1e6, "Lane Rate (GSPS)": converter.bit_clock/1e9}
+                show_valid = st.toggle("Show only valid modes", value=True)
+                if show_valid:
+                    df = df[df["Valid"] == "Yes"]
+                    df = df.drop(columns=["Valid"])
 
-                for clock in clocks:
-                    modes_all_info[mode][clock] = clocks[clock]
+                # Create new index column and move mode to separate column
+                df["Mode"] = df.index
+                df = df.reset_index(drop=True)
+                # Make mode first column
+                cols = df.columns.tolist()
+                cols = cols[-1:] + cols[:-1]
+                df = df[cols]
 
-                try:
-                    converter.validate_config()
-                    modes_all_info[mode]["Valid"] = "Yes"
-                except Exception as e:
-                    print(e)
-                    modes_all_info[mode]["Valid"] = "No"
+                # Change jesd_class column name to be JESD204 Class
+                df = df.rename(columns={"jesd_class": "JESD204 Class"})
+                df = df.rename(columns={"Mode": "Quickset Mode"})
 
+                # Change data in jesd_class column to be more human readable
+                df["JESD204 Class"] = df["JESD204 Class"].replace(
+                    {"jesd204b": "204B", "jesd204c": "204C"}
+                )
 
-            # Convert to DataFrame so we can change orientation
-            df = pd.DataFrame(modes_all_info).T
+                to_disable = df.columns
+                height = len(df) * 50
+                de = st.data_editor(
+                    df,
+                    use_container_width=True,
+                    disabled=to_disable,
+                    hide_index=True,
+                    height=height,
+                )
 
-            show_valid = st.toggle("Show only valid modes", value=True)
-            if show_valid:
-                df = df[df["Valid"] == "Yes"]
-                df = df.drop(columns=["Valid"])
-
-            # Create new index column and move mode to separate column
-            df["Mode"] = df.index
-            df = df.reset_index(drop=True)
-            # Make mode first column
-            cols = df.columns.tolist()
-            cols = cols[-1:] + cols[:-1]
-            df = df[cols]
-
-            # st.table(df)
-
-            # # Get the mode number to appear as a column
-            # df.columns.name = df.index.name
-            # df.index.name = None
-            # st.write(df.to_html(), unsafe_allow_html=True)
-
-            # Change jesd_class column name to be JESD204 Class
-            df = df.rename(columns={"jesd_class": "JESD204 Class"})
-            df = df.rename(columns={"Mode": "Quickset Mode"})
-
-            # Change data in jesd_class column to be more human readable
-            df["JESD204 Class"] = df["JESD204 Class"].replace({"jesd204b": "204B", "jesd204c": "204C"})
-
-            # Add column of buttons to dataframe
-            # df["Select"] = ""
-            # for mode in df.index:
-            #     df.loc[mode, "Select"] = False
-
-            to_disable = df.columns
-            # # Remove the select column
-            # to_disable = to_disable.drop("Select")
-
-            # st.dataframe(df, use_container_width=True, selection_mode = 'single-row')
-            de = st.data_editor(df, use_container_width=True, disabled=to_disable, hide_index=True)
-            
-            # Extract selected
-
-
-
-
-        else:
-            st.write("No modes found")
+            else:
+                st.write("No modes found")

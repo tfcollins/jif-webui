@@ -58,15 +58,12 @@ class SystemConfigurator(Page):
 
         data = sys.draw(cfg)
 
-        st.image(data, use_column_width=True)
-
+        st.image(data, use_container_width=True)
 
         settings, diagram = st.columns(2)
 
         with settings:
             st.header("Settings")
-
-
 
         with diagram:
             st.header("Diagram")
