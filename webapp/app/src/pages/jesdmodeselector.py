@@ -56,7 +56,6 @@ class JESDModeSelector(Page):
             decimation = 1
             if converter.datapath:
                 if hasattr(converter.datapath, "cddc_decimations_available"):
-                    print("Here")
                     options = converter.datapath.cddc_decimations_available
                     cddc_decimation = st.selectbox(
                         "CDDC Decimation", options=options, format_func=lambda x: str(x)

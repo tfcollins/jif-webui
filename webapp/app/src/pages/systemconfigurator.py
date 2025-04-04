@@ -71,4 +71,4 @@ class SystemConfigurator(Page):
             with st.container(border=True):
                 # st.markdown(file)
                 print(data)
-                st.image(data, use_column_width=True)
+                st.image(data, use_container_width=True)

@@ -16,6 +16,11 @@ def get_jesd_controls(converter):
 
     for subclass in subclasses:
         # Pick first mode of subclass and extract settings
+        ks = all_modes[subclass].keys()
+        ks = list(ks)
+        if len(ks) == 0:
+            # print(f"No modes found for subclass {subclass}")
+            continue
         first_mode = list(all_modes[subclass].keys())[0]
         mode_settings = all_modes[subclass][first_mode].keys()
         mode_settings = sorted(mode_settings)
